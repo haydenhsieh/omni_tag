@@ -1,0 +1,7 @@
+# Bus Pirate v3 (FT232 USB serial) and v4 (native USB CDC).
+# Install before 73-seat-late.rules so systemd-logind processes uaccess.
+# v3 shares its USB IDs with other FTDI adapters. To restrict this rule to
+# your device, add ATTRS{serial}=="YOUR_SERIAL" (see README.md).
+# USB ID references: https://sigrok.org/wiki/Dangerous_Prototypes_Buspirate/Info
+SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6001", TAG+="uaccess", ENV{ID_MM_DEVICE_IGNORE}="1", SYMLINK+="buspirate-%s{serial}"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="04d8", ATTRS{idProduct}=="fb00", TAG+="uaccess", ENV{ID_MM_DEVICE_IGNORE}="1", SYMLINK+="buspirate-%s{serial}"

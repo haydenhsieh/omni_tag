@@ -51,6 +51,40 @@ Do not remove the card or power during a write; verification failures do not
 imply that the write was rolled back. Exit codes: 0 success, 1 hardware/I/O
 failure, 2 invalid arguments, 130 interruption.
 
+## Linux udev access
+
+[udev/70-buspirate.rules](udev/70-buspirate.rules) grants the active local
+login session serial access through systemd-logind (`uaccess`), tells
+ModemManager to ignore matching ports, and creates `/dev/buspirate-<serial>`
+symlinks. It covers the v3 FTDI ID `0403:6001` and v4 ID `04d8:fb00`
+([USB ID reference](https://sigrok.org/wiki/Dangerous_Prototypes_Buspirate/Info)).
+The v3 ID is shared by other FTDI adapters: for a device-specific rule, inspect
+the serial number and add `ATTRS{serial}=="YOUR_SERIAL",` to the matching rule
+before installing it:
+
+```sh
+udevadm info --attribute-walk --name=/dev/ttyUSB0
+sudo install -m 0644 udev/70-buspirate.rules /etc/udev/rules.d/70-buspirate.rules
+sudo udevadm control --reload-rules
+```
+
+Unplug and reconnect the Bus Pirate, then find its symlink and use it as the
+CLI port:
+
+```sh
+ls -l /dev/buspirate-*
+omni-tag --port /dev/buspirate-YOUR_SERIAL --power info
+```
+
+Use `/dev/ttyACM0` instead of `/dev/ttyUSB0` when inspecting a v4, adjusting the
+number to your device. If a device has no unique serial, use its
+`/dev/serial/by-path/` link instead. These rules do not cover newer Bus Pirates
+or bootloader devices. For SSH, headless services, or systems without
+systemd-logind, use your distribution's serial group (`dialout` on Debian/Ubuntu,
+`uucp` on Arch), add your user to that group and log in again. `uaccess` grants
+access to the active local session only. The file is provided in the repository;
+installing the Python package does not install system rules.
+
 ## Wiring guide
 
 Disconnect power before wiring. Use the **signal labels** on your Bus Pirate,
