@@ -1,7 +1,7 @@
 import contextlib
 import io
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from omni_tag.cli import main, parser, run
 from omni_tag.hardware import BusPirate, HardwareError, RC522, crc_a
@@ -63,6 +63,26 @@ class Tests(unittest.TestCase):
         self.assertEqual(bus.transfer(bytes(range(18))), bytes(range(16)) + b'\xaa\xbb')
         self.assertEqual([call.args[0] for call in port.write.call_args_list],
                          [b'\x02', b'\x1f', bytes(range(16)), b'\x11', bytes([16, 17]), b'\x03'])
+
+    def test_aux_reset_startup_and_cleanup(self):
+        for power, reset_aux, expected in (
+            (False, False, [0x41]), (True, False, [0x49]),
+            (False, True, [0x41, 0x43]), (True, True, [0x49, 0x4B]),
+        ):
+            with self.subTest(power=power, reset_aux=reset_aux):
+                port = Mock()
+                port.read.side_effect = [b'BBIO1', b'SPI1', b'BBIO1']
+                bus = BusPirate(port, power=power, reset_aux=reset_aux)
+                bus.ack = Mock()
+                with patch('omni_tag.hardware.time.sleep') as sleep:
+                    bus.start()
+                self.assertEqual([c.args[0] for c in bus.ack.call_args_list],
+                                 [0x8A, 0x61] + expected)
+                self.assertEqual([c.args[0] for c in sleep.call_args_list],
+                                 [0.01, 0.05] if reset_aux else [0.05])
+                bus.close()
+                bus.ack.assert_called_with(0x41)
+                port.close.assert_called_once()
 
     def test_partial_serial_reads(self):
         port = Mock()

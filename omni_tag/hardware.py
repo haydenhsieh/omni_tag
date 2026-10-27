@@ -18,9 +18,10 @@ def crc_a(data):
 
 
 class BusPirate:
-    def __init__(self, serial_port, power=False):
+    def __init__(self, serial_port, power=False, reset_aux=False):
         self.port = serial_port
         self.power = power
+        self.reset_aux = reset_aux
         self.active = False
 
     def read(self, count):
@@ -55,6 +56,10 @@ class BusPirate:
         self.ack(0x8A)  # driven 3.3V, CKP=0, CKE=1, SMP=0 (mode 0)
         self.ack(0x61)  # 125 kHz
         self.ack(0x49 if self.power else 0x41)  # CS high, pullups off
+        if self.reset_aux:
+            # AUX starts low above: hold NRSTPD low, then release at 3.3 V.
+            time.sleep(0.01)
+            self.ack(0x4B if self.power else 0x43)
         time.sleep(0.05)
 
     def transfer(self, data):

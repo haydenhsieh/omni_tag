@@ -29,6 +29,7 @@ def parser():
     p.add_argument('--port', required=True, help='Serial device, e.g. /dev/ttyUSB0')
     p.add_argument('--baud', type=int, default=115200)
     p.add_argument('--power', action='store_true', help='Enable Bus Pirate onboard power (legacy hardware only)')
+    p.add_argument('--reset-aux', action='store_true', help='Drive RC522 RST using Bus Pirate AUX')
     commands = p.add_subparsers(dest='command', required=True)
     commands.add_parser('info', help='Read reader version, UID, ATQA and SAK')
     for name in ('read-block', 'write-block'):
@@ -99,7 +100,7 @@ def main(argv=None):
     reader = None
     try:
         import serial
-        bus = BusPirate(serial.Serial(args.port, args.baud, timeout=0.25, write_timeout=2), args.power)
+        bus = BusPirate(serial.Serial(args.port, args.baud, timeout=0.25, write_timeout=2), args.power, args.reset_aux)
         bus.start()
         reader = RC522(bus)
         run(args, reader)

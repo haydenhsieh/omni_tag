@@ -100,7 +100,7 @@ inexpensive eight-pin modules already are).
 | MOSI | MOSI | Host to reader |
 | MISO | MISO | Reader to host |
 | CS | SDA / SS / NSS | Active-low SPI chip select; **not I²C SDA** |
-| 3.3 V | RST / NRSTPD | Hold reset high; software reset is used |
+| AUX (with `--reset-aux`), or 3.3 V | RST / NRSTPD | Separate reset control, or hold reset high |
 | No connection | IRQ | Polling is used |
 
 Never connect RC522 power or logic to 5 V. Use one power source; do not tie an
@@ -109,7 +109,19 @@ leave the Bus Pirate 3.3 V output disconnected and omit `--power`. On legacy
 Bus Pirates `--power` enables the onboard supplies; only wire the 3.3 V output.
 Keep jumpers short. An unstable or overloaded supply causes intermittent reads;
 use a suitable external 3.3 V supply if the reader load exceeds your board's
-available current. RST must not float. No AUX or VPU connection is needed.
+available current. RST must not float. To keep power and reset on separate Bus Pirate pins,
+connect **3.3 V → RC522 3.3V** and **AUX → RC522 RST**, then run:
+
+```sh
+omni-tag --port /dev/ttyUSB0 --power --reset-aux info
+```
+
+Use `--reset-aux` on every command with this wiring. It holds AUX low for
+10 ms at startup, drives it high at 3.3 V, and waits 50 ms before reader
+initialization. AUX remains high during operation and is driven low during
+cleanup. Without this option AUX stays low, so an AUX-wired reader remains in
+reset. The option also works with an external 3.3 V supply (omit `--power`).
+Keep VPU disconnected; it is not a reset-control output.
 
 If reader detection fails, check ground, 3.3 V, RST high and SDA/CS wiring.
 A tag timeout can mean no card, an unsupported tag or inadequate RF power.
