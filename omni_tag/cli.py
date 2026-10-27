@@ -29,8 +29,10 @@ def parser():
     p.add_argument('--port', required=True, help='Serial device, e.g. /dev/ttyUSB0')
     p.add_argument('--baud', type=int, default=115200)
     p.add_argument('--power', action='store_true', help='Enable Bus Pirate onboard power (legacy hardware only)')
-    p.add_argument('--reset-aux', action='store_true', help='Drive RC522 RST using Bus Pirate AUX')
+    p.add_argument('--reset-aux', action=argparse.BooleanOptionalAction, default=True,
+                   help='Drive RC522 RST using Bus Pirate AUX (default: enabled)')
     commands = p.add_subparsers(dest='command', required=True)
+    commands.add_parser('reader-info', help='Read reader registers without selecting or writing a tag')
     commands.add_parser('info', help='Read reader version, UID, ATQA and SAK')
     for name in ('read-block', 'write-block'):
         sub = commands.add_parser(name)
@@ -41,15 +43,28 @@ def parser():
         if name == 'write-block':
             sub.add_argument('data', type=lambda s: hex_bytes(s, 16))
             sub.add_argument('--yes', action='store_true', help='Confirm writing this block')
-    sub = commands.add_parser('set-uid', help='Change a four-byte Gen1A UID, preserving the rest of block 0')
+    sub = commands.add_parser('set-uid', help='Change a four-byte Gen1A or Gen2/CUID UID, preserving block 0')
     sub.add_argument('uid', type=lambda s: hex_bytes(s, 4))
+    sub.add_argument('--method', choices=('gen1a', 'gen2'), default='gen2', help='UID write protocol (default: gen2; authenticated direct write)')
+    sub.add_argument('--key', type=lambda s: hex_bytes(s, 6), default=bytes.fromhex('FFFFFFFFFFFF'))
+    sub.add_argument('--key-type', choices=('A', 'B'), default='A')
     sub.add_argument('--yes', action='store_true', help='Confirm UID change')
     return p
 
 
+def checked_operation(label, function, *args):
+    try:
+        return function(*args)
+    except HardwareError as error:
+        raise HardwareError(f'{label}: {error}') from error
+
+
 def run(args, reader):
-    version = reader.init()
-    uid, atqa, sak = reader.select()
+    version = checked_operation('reader initialization', reader.init)
+    if args.command == 'reader-info':
+        print(json.dumps(checked_operation('reader diagnostics', reader.diagnostics), indent=2))
+        return
+    uid, atqa, sak = checked_operation('initial card selection', reader.select)
     if args.command == 'info':
         print(json.dumps({'reader_version': f'{version:02X}', 'uid': uid.hex().upper(),
                           'atqa': atqa.hex().upper(), 'sak': f'{sak:02X}'}))
@@ -58,17 +73,21 @@ def run(args, reader):
         raise HardwareError('Block operations require a supported MIFARE Classic card')
     if args.command == 'set-uid':
         if len(uid) != 4:
-            raise HardwareError('set-uid supports four-byte Gen1A cards only')
-        reader.unlock()
-        original = reader.read_block(0)
+            raise HardwareError('set-uid supports four-byte UIDs only')
+        if args.method == 'gen1a':
+            checked_operation('unlock before UID write', reader.unlock)
+        else:
+            checked_operation('Gen2 authentication for block 0', reader.authenticate,
+                              0, args.key, uid, args.key_type == 'B')
+        original = checked_operation('read original block 0', reader.read_block, 0)
         if original[:4] != uid or original[4] != reduce(xor, uid):
             raise HardwareError('Block 0 does not match selected UID/BCC')
         updated = args.uid + bytes([reduce(xor, args.uid)]) + original[5:]
-        reader.write_block(0, updated)
+        checked_operation('write/verify block 0 (write may have occurred)', reader.write_block, 0, updated)
         # Cycle the RF field and verify actual anticollision UID, too.
-        reader.stop()
-        reader.init()
-        actual, _, _ = reader.select()
+        checked_operation('stop RF field after UID write', reader.stop)
+        checked_operation('reinitialize after UID write', reader.init)
+        actual, _, _ = checked_operation('select after UID write (write already verified)', reader.select)
         if actual != args.uid:
             raise HardwareError('Block written, but selected UID verification failed')
         print(f'UID changed: {uid.hex().upper()} -> {actual.hex().upper()}')

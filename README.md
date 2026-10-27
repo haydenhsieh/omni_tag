@@ -3,8 +3,9 @@
 Python CLI for a Bus Pirate connected over SPI to an MFRC522 (RC522) module.
 Read ISO14443A UIDs, read/write MIFARE Classic data blocks using a known key,
 and change four-byte UIDs on **Gen1A Chinese magic cards** supporting the
-HALT → seven-bit `40` → `43` backdoor. “UID modifiable” alone does not identify
-this generation. Gen2/CUID, Gen3, Gen4, Ultralight/NTAG UID writing, key recovery,
+HALT → seven-bit `40` → `43` backdoor, or **Gen2/CUID direct-write cards** using
+normal authentication (the default `set-uid` method). “UID modifiable” alone does not identify
+this generation. Gen3, Gen4, Ultralight/NTAG UID writing, key recovery,
 and full-card cloning are not implemented. Use cards you own or administer.
 
 ## Setup and usage
@@ -41,6 +42,20 @@ digits. The default authentication key is `FFFFFFFFFFFF`; no keys are guessed.
 Block addresses are decimal or `0x` hexadecimal. Supported Classic capacities
 are Mini, 1K and 4K, selected from SAK. Seven-byte UIDs can be read, but cannot
 be changed by this tool.
+
+For confirmed Gen2/CUID cards, use authenticated direct block-0 writing:
+
+```sh
+omni-tag --port /dev/ttyUSB0 --power set-uid DEADBEEF --yes
+```
+
+Gen2 is the default method; use `--method gen1a` for Gen1A cards. Gen2 uses key A `FFFFFFFFFFFF` by default;
+`--key` and `--key-type B` select another known sector-0 key. A successful
+normal block-0 read combined with a failed Gen1A unlock suggests this method,
+but does not prove the card permits UID writes. Genuine Classic cards reject
+block-0 writes. There is no automatic fallback or write-based generation probe.
+The UID and BCC change; all eleven remaining block-0 bytes are preserved.
+[Protocol reference: Proxmark3 magic card notes](https://github.com/RfidResearchGroup/proxmark3/blob/master/doc/magic_cards_notes.md#mifare-classic-directwrite-aka-gen2-aka-cuid).
 
 Writes require `--yes` and are read back for verification. `write-block` refuses
 block 0 and all sector trailers to protect manufacturer data, keys and access
@@ -100,7 +115,7 @@ inexpensive eight-pin modules already are).
 | MOSI | MOSI | Host to reader |
 | MISO | MISO | Reader to host |
 | CS | SDA / SS / NSS | Active-low SPI chip select; **not I²C SDA** |
-| AUX (with `--reset-aux`), or 3.3 V | RST / NRSTPD | Separate reset control, or hold reset high |
+| AUX (default), or 3.3 V (with `--no-reset-aux`) | RST / NRSTPD | Separate reset control, or hold reset high |
 | No connection | IRQ | Polling is used |
 
 Never connect RC522 power or logic to 5 V. Use one power source; do not tie an
@@ -113,19 +128,41 @@ available current. RST must not float. To keep power and reset on separate Bus P
 connect **3.3 V → RC522 3.3V** and **AUX → RC522 RST**, then run:
 
 ```sh
-omni-tag --port /dev/ttyUSB0 --power --reset-aux info
+omni-tag --port /dev/ttyUSB0 --power info
 ```
 
-Use `--reset-aux` on every command with this wiring. It holds AUX low for
+AUX reset control is enabled by default (`--reset-aux`). It holds AUX low for
 10 ms at startup, drives it high at 3.3 V, and waits 50 ms before reader
 initialization. AUX remains high during operation and is driven low during
-cleanup. Without this option AUX stays low, so an AUX-wired reader remains in
-reset. The option also works with an external 3.3 V supply (omit `--power`).
+cleanup. Use `--no-reset-aux` when RST is tied directly to 3.3 V; this leaves AUX
+low. AUX reset also works with an external 3.3 V supply (omit `--power`).
 Keep VPU disconnected; it is not a reset-control output.
 
 If reader detection fails, check ground, 3.3 V, RST high and SDA/CS wiring.
+Initialization waits for reset completion and reads back configuration registers.
+A `configuration did not persist` error means the reader did not retain its SPI
+writes; diagnose MOSI/CS, RST and power before retrying tag commands. The error
+lists expected and observed values. Antenna outputs and timer configuration must
+be enabled before attempting card selection.
 A tag timeout can mean no card, an unsupported tag or inadequate RF power.
 A backdoor ACK failure usually means an incompatible magic-card generation.
+For failures during initial selection, run
+`omni-tag --port /dev/ttyUSB0 --power reader-info` (add
+`--no-reset-aux` if RST is tied high). This reads reader registers without selecting
+or writing a tag. Report this output together with the failing command's error;
+selection errors identify WUPA, anticollision, or SELECT. With the standard
+configuration, TModeReg/TPrescalerReg/TReloadRegH/TReloadRegL should read
+`8D`/`3E`/`00`/`1E`, and TxControlReg bits 0 and 1 should both be set.
+
+If `info` works but `set-uid` times out, the error identifies the failing stage
+(initial selection, Gen1A HALT/unlock, block 0 read/write, or selection after
+writing). A software command timeout also reports IRQ, ErrorReg, Status1 and
+FIFO registers. Include the complete error when reporting a failure; `info`
+success alone does not establish Gen1A backdoor compatibility. HALT expects no
+reply: both a reader timer timeout and a host timeout with confirmed transmission,
+empty FIFO, and no receive/error flags are accepted for HALT only. Unlock and
+read/write commands still require valid responses. A timeout during
+or after writing may leave the UID changed; read it with `info` before retrying.
 The CLI releases Crypto1, switches off the antenna and exits binary mode on
 normal completion; legacy onboard power is disabled during cleanup.
 
